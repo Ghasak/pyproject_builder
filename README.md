@@ -45,6 +45,11 @@ cargo install --path .
 Simply run `pyproj` in any directory:
 
 ```bash
+
+󰚩 INSERT 󰇌 on    main !1 ?1
+╰─ ln -s ~/gCliHub/pyproject_builder/target/release/pyproj /usr/local/bin/pyproject_builder
+
+
 pyproj
 ```
 
