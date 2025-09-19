@@ -17,12 +17,12 @@ Ruff, testing with Pytest, and Jupyter notebook support.
 
 ## Features
 
-🐍 **Modern Python toolchain** - Uses `uv` for fast, reliable package management
-⚙️ **Complete VS Code setup** - Debugging, formatting, linting, and IntelliSense configured
-🔧 **Developer tools** - Ruff, Black, Pyright, Pytest with coverage
-📊 **Jupyter ready** - Notebooks folder with proper PYTHONPATH configuration
-🎯 **Zero configuration** - Everything works out of the box
-📦 **Batteries included** - All dev dependencies and configs pre-configured
+- 🐍 **Modern Python toolchain** - Uses `uv` for fast, reliable package management
+- ⚙️ **Complete VS Code setup** - Debugging, formatting, linting, and IntelliSense configured
+- 🔧 **Developer tools** - Ruff, Black, Pyright, Pytest with coverage
+- 📊 **Jupyter ready** - Notebooks folder with proper PYTHONPATH configuration
+- 🎯 **Zero configuration** - Everything works out of the box
+- 📦 **Batteries included** - All dev dependencies and configs pre-configured
 
 ## Installation
 
