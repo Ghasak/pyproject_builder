@@ -1,44 +1,19 @@
-use anyhow::{Context, Result};
-use dialoguer::Input;
+use anyhow::{bail, Context, Result};
+use clap::{ArgAction, Parser};
+use owo_colors::OwoColorize;
 use std::env;
-use std::fs::{self, File};
-use std::io::Write;
-use std::path::Path;
-use std::process::Command;
+use std::fs;
+use std::path::{Path, PathBuf};
 
-/// Find the system Python version or return a default.
-fn detect_system_python() -> String {
-    let candidate = which::which("python3")
-        .or_else(|_| which::which("python"))
-        .ok();
-    if let Some(bin) = candidate {
-        if let Ok(out) = Command::new(bin)
-            .arg("-c")
-            .arg("import sys;print('.'.join(map(str, sys.version_info[:3])))")
-            .output()
-        {
-            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !s.is_empty() {
-                return s;
-            }
-        }
-    }
-    "3.11.0".to_string()
-}
+mod scaffold;
+mod templates;
+mod util;
 
-/// Write a string or formatted string to a file, creating parent dirs.
-fn write<P: AsRef<Path>>(path: P, content: impl AsRef<[u8]>) -> Result<()> {
-    if let Some(parent) = path.as_ref().parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let mut f = File::create(path)?;
-    f.write_all(content.as_ref())?;
-    Ok(())
-}
+use scaffold::ScaffoldPlan;
+use util::detect_system_python;
 
-fn main() -> Result<()> {
-    println!(
-        r#"
+/// Fancy banner shown in --help
+const BANNER: &str = r#"
   _ \ _ \   _ \     | __|   __| __ __|
   __/   /  (   | \  | _|   (       |
  _|  _|_\ \___/ \__/ ___| \___|   _|
@@ -52,318 +27,281 @@ fn main() -> Result<()> {
 ┃  ⚙️  Venv, VS Code, Pyright, Ruff, Pytest, PyRefly, Jupyter ┃
 ┃  📦  Batteries included — zero cruft, zero fuss             ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-"#
-    );
+"#;
 
-    // ---- prompt defaults ----
+#[derive(Parser, Debug)]
+#[command(
+    name = "py-proj",
+    disable_help_flag = true,
+    disable_version_flag = true,
+    about = "Scaffold a minimal Python project (uv + VS Code) with logging package.",
+    long_about = None
+)]
+struct Cli {
+    /// Create a new project (non-interactive)
+    #[arg(long = "create_project", action = ArgAction::SetTrue)]
+    create_project: bool,
+
+    /// Clean build/test caches under the project
+    #[arg(long = "clean_project", action = ArgAction::SetTrue)]
+    clean_project: bool,
+
+    /// Delete (nuke) the entire project directory (requires --yes)
+    #[arg(long = "delete_project", action = ArgAction::SetTrue)]
+    delete_project: bool,
+
+    /// Project name (default: <cwd_basename>_proj)
+    #[arg(long, short = 'p')]
+    project: Option<String>,
+
+    /// Python version to install via uv (default: auto-detected)
+    #[arg(long = "python", short = 'P')]
+    py_full: Option<String>,
+
+    /// Output directory; default: $PWD/<project>
+    #[arg(long = "outdir")]
+    outdir: Option<PathBuf>,
+
+    /// Auto-confirm dangerous actions like --delete_project
+    #[arg(long = "yes", short = 'y', action = ArgAction::SetTrue)]
+    yes: bool,
+
+    /// Show help with banner and color
+    #[arg(long = "help", short = 'h', action = ArgAction::SetTrue)]
+    help: bool,
+
+    /// Show version
+    #[arg(long = "version", short = 'V', action = ArgAction::SetTrue)]
+    version: bool,
+}
+
+#[allow(clippy::print_literal)]
+fn main() -> Result<()> {
+    let cli = Cli::parse();
+
+    if cli.version {
+        println!("{} {}", "py-proj".bold(), env!("CARGO_PKG_VERSION").green());
+        return Ok(());
+    }
+
+    // If help is requested or no primary action was provided, show help and exit.
+    let no_action = !(cli.create_project || cli.clean_project || cli.delete_project);
+    if cli.help || no_action {
+        print_help();
+        return Ok(());
+    }
+
+    // Resolve defaults
     let cwd = env::current_dir()?;
-    let default_proj = format!("{}_proj", cwd.file_name().unwrap().to_string_lossy());
-    let default_py = detect_system_python();
+    let default_proj = format!(
+        "{}_proj",
+        cwd.file_name().unwrap_or_default().to_string_lossy()
+    );
+    let project = cli.project.unwrap_or(default_proj);
+    let root = cli.outdir.unwrap_or_else(|| cwd.join(&project));
+    let py_full = cli.py_full.unwrap_or_else(detect_system_python);
 
-    let project: String = Input::new()
-        .with_prompt("Project name")
-        .default(default_proj.clone())
-        .interact_text()?;
-
-    let py_full: String = Input::new()
-        .with_prompt("Python version (e.g. 3.13.5)")
-        .default(default_py.clone())
-        .interact_text()?;
-
+    // Derived versions used in templates
     let mm = py_full.split('.').take(2).collect::<Vec<_>>().join(".");
     let mm_nodec = mm.replace('.', "");
 
-    // ---- directory structure ----
-    let root = cwd.join(&project);
-    fs::create_dir_all(root.join("src"))?;
-    fs::create_dir_all(root.join("tests"))?;
-    fs::create_dir_all(root.join("Notebooks"))?;
-    fs::create_dir_all(root.join(".vscode"))?;
+    if cli.create_project {
+        println!("{} {}", ">>".cyan().bold(), "Create project".bold());
+        println!("  {} {}", "Project:".dimmed(), project.blue().bold());
+        println!(
+            "  {} {}",
+            "Root:   ".dimmed(),
+            root.display().to_string().blue()
+        );
+        println!("  {} {}", "Python: ".dimmed(), py_full.magenta());
 
-    write(root.join("src/__init__.py"), "")?;
-    write(
-        root.join("src/main.py"),
-        r#"def main() -> None:
-    print("Hello from src.main!")
-
-if __name__ == "__main__":
-    main()
-"#,
-    )?;
-
-    // ---- VS Code configs ----
-    write(
-        root.join(".vscode/launch.json"),
-        r#"{
-  "version": "0.2.0",
-  "configurations": [
-    {
-      "name": "Python: Current file",
-      "type": "debugpy",
-      "request": "launch",
-      "program": "${file}",
-      "cwd": "${workspaceFolder}",
-      "env": {
-        "PYTHONPATH": "${workspaceFolder}:${workspaceFolder}/src:${workspaceFolder}/Notebooks"
-      },
-      "console": "integratedTerminal",
-      "justMyCode": true,
-      "subProcess": true
-    },
-    {
-      "name": "Python: Module src.main",
-      "type": "debugpy",
-      "request": "launch",
-      "module": "src.main",
-      "cwd": "${workspaceFolder}",
-      "env": {
-        "PYTHONPATH": "${workspaceFolder}:${workspaceFolder}/src:${workspaceFolder}/Notebooks"
-      },
-      "console": "integratedTerminal",
-      "justMyCode": true,
-      "subProcess": true
+        create_project(&root, &project, &py_full, &mm, &mm_nodec)?;
+        println!("{} {}", "OK".green().bold(), "Project created.");
     }
-  ]
-}"#,
-    )?;
 
-    write(
-        root.join(".vscode/settings.json"),
-        r#"{
-  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
-  "python.terminal.activateEnvironment": true,
-  "python.analysis.extraPaths": [
-    "${workspaceFolder}",
-    "${workspaceFolder}/src",
-    "${workspaceFolder}/Notebooks"
-  ],
-  "python.envFile": "${workspaceFolder}/.env",
-  "jupyter.envFile": "${workspaceFolder}/.env",
-  "[python]": {
-    "editor.defaultFormatter": "ms-python.black-formatter",
-    "editor.formatOnSave": true
-  },
-  "black-formatter.importStrategy": "fromEnvironment",
-  "black-formatter.path": ["${workspaceFolder}/.venv/bin/black"],
-  "black-formatter.args": ["--line-length", "100"],
-  "notebook.defaultFormatter": "ms-python.black-formatter"
-}"#,
-    )?;
-
-    write(
-        root.join(".vscode/tasks.json"),
-        r#"{
-  "version": "2.0.0",
-  "tasks": [
-    {
-      "label": "Run (uv): src.main",
-      "type": "shell",
-      "command": "uv run python -m src.main",
-      "options": { "cwd": "${workspaceFolder}", "env": { "PYTHONPATH": "${workspaceFolder}" } },
-      "problemMatcher": []
+    if cli.clean_project {
+        println!("{} {}", ">>".cyan().bold(), "Clean project caches".bold());
+        clean_project(&root)?;
+        println!("{} {}", "OK".green().bold(), "Project cleaned.");
     }
-  ]
-}"#,
-    )?;
 
-    // ---- env files ----
-    write(
-        root.join(".env"),
-        "PYTHONPATH=.:./src:./Notebooks\nENV=dev\n",
-    )?;
-    write(
-        root.join(".envrc"),
-        r#"export PYTHONPATH="${PYTHONPATH}:$PWD:$PWD/src:$PWD/Notebooks"
-if [ -f ./.env ]; then
-  set -a
-  . ./.env
-  set +a
-fi
-"#,
-    )?;
+    if cli.delete_project {
+        println!("{} {}", ">>".cyan().bold(), "Delete project (NUKE)".bold());
+        if !cli.yes {
+            bail!(
+                "{} Use {} to confirm deletion.",
+                "Refusing to delete without confirmation.".yellow(),
+                "--yes".bold()
+            );
+        }
+        delete_project(&root)?;
+        println!("{} {}", "OK".green().bold(), "Project deleted.");
+    }
 
-    // ---- pyrefly.toml ----
-    write(
-        root.join("pyrefly.toml"),
-        &format!(
-            r#"[project]
-name = "{project}"
-python = "{py_full}"
+    Ok(())
+}
+fn print_help() {
+    use owo_colors::OwoColorize as _;
 
-[paths]
-src = "src"
-notebooks = "Notebooks"
-venv = ".venv"
-env = ".env"
+    // Keep the ASCII banner exactly as-is
+    print!("{BANNER}");
 
-[imports]
-import_roots = ["src"]
+    let cmd = "py-proj";
 
-[lint]
-enable = ["ruff"]
-format = ["black"]
+    // USAGE
+    println!("{}", "USAGE".bold().underline());
+    println!("  {}", format!("{cmd} [FLAGS] [OPTIONS]").italic());
+    println!();
 
-[test]
-runner = "pytest"
-coverage = true
-"#
-        ),
-    )?;
-
-    // ---- pyrightconfig.json ----
-    write(
-        root.join("pyrightconfig.json"),
-        &format!(
-            r#"{{
-  "pythonVersion": "{mm}",
-  "pythonPlatform": "Darwin",
-  "typeCheckingMode": "basic",
-  "reportMissingImports": "warning",
-  "useLibraryCodeForTypes": true,
-  "include": [".", "src/"],
-  "exclude": ["**/__pycache__", ".venv"],
-  "venvPath": ".",
-  "venv": ".venv",
-  "executionEnvironments": [
-    {{
-      "root": ".",
-      "extraPaths": [
-        "./src",
-        "./Notebooks/",
-        ".venv/lib/python{mm}/site-packages"
-      ]
-    }}
-  ]
-}}"#
-        ),
-    )?;
-
-    // ---- pyproject.toml ----
-    write(
-        root.join("pyproject.toml"),
-        &format!(
-            r#"[project]
-name = "{project}"
-version = "0.1.0"
-description = "Minimal project template"
-readme = "README.md"
-requires-python = ">={mm}"
-authors = [{{ name = "Your Name" }}]
-dependencies = []
-
-[tool.uv]
-
-[project.optional-dependencies]
-dev = [
-  "ruff>=0.6.0",
-  "black>=24.0.0",
-  "pyright>=1.1.380",
-  "pytest>=8.0.0",
-  "pytest-cov>=5.0.0",
-  "ipykernel>=6.0.0",
-  "rich>=13.0.0"
-]
-
-[tool.ruff]
-line-length = 100
-target-version = "py{mm_nodec}"
-extend-exclude = [".venv"]
-fix = true
-"#,
-            project = project,
-            mm = mm,
-            mm_nodec = mm_nodec
-        ),
-    )?;
-
-    // ---- gitignore ----
-    write(
-        root.join(".gitignore"),
-        r#".venv/
-__pycache__/
-*.pyc
-.env
-.ipynb_checkpoints/
-.coverage
-.htmlcov/
-.mypy_cache/
-.pytest_cache/
-dist/
-build/
-"#,
-    )?;
-
-    // ---- README ----
-    write(
-        root.join("README.md"),
-        &format!(
-            r#"# {project}
-
-Generated by PY-PROJ scaffolder.
-
-## Setup
-
-```bash
-cd {project}
-direnv allow     # or: source .venv/bin/activate
-uv pip install -e ".[dev]"
-```
-
-## Running
-
-```bash
-uv run python -m src.main
-```
-
-## Development
-
-```bash
-# Format code
-uvx black .
-
-# Lint code
-uvx ruff check --fix
-
-# Run tests
-uv run pytest
-
-# Type checking
-uvx pyright
-```
-
-## Structure
-
-- `src/` - Main source code
-- `tests/` - Test files
-- `Notebooks/` - Jupyter notebooks
-- `.vscode/` - VS Code configuration
-- `pyproject.toml` - Project configuration
-- `pyrefly.toml` - Custom project metadata
-"#,
-            project = project
-        ),
-    )?;
-
-    // ---- uv env creation ----
-    println!("⚙️  Installing Python {py_full} via uv …");
-    Command::new("uv")
-        .args(["python", "install", &py_full])
-        .current_dir(&root)
-        .status()
-        .context("uv python install failed")?;
-
-    println!("🧪 Creating uv venv …");
-    Command::new("uv")
-        .args(["venv", "--python", &py_full, ".venv"])
-        .current_dir(&root)
-        .status()
-        .context("uv venv failed")?;
-
-    println!("\n🎉 Project `{}` created in {:?}\n", project, root);
+    // EXAMPLE
+    println!("{}", "EXAMPLE".bold().underline());
     println!(
-    "Next:\n  cd {}\n  direnv allow   # or: source .venv/bin/activate\n  uv pip install -e \".[dev]\"\n  uv run python -m src.main\n  uvx ruff check --fix\n",
-    project
-);
+        "  {}",
+        format!("{cmd} --create_project --project myproj --python 3.13.1").cyan()
+    );
+    println!();
 
+    // FLAGS
+    println!("{}", "FLAGS".bold());
+    println!(
+        "  {}  {}",
+        "🆕  --create_project".green().bold(),
+        "Create a new project in the target directory.".dimmed()
+    );
+    println!(
+        "  {}  {}",
+        "🧹  --clean_project".yellow().bold(),
+        "Remove caches: .venv, __pycache__, .pytest_cache, .ruff_cache, etc.".dimmed()
+    );
+    println!(
+        "  {}  {}",
+        "💣  --delete_project".red().bold(),
+        "Delete the entire project directory (requires --yes).".dimmed()
+    );
+    println!(
+        "  {}  {}",
+        "✅  -y, --yes".green().bold(),
+        "Auto-confirm dangerous actions (e.g., delete).".dimmed()
+    );
+    println!(
+        "  {}  {}",
+        "❓  -h, --help".bold(),
+        "Show this help.".dimmed()
+    );
+    println!(
+        "  {}  {}",
+        "🏷️  -V, --version".bold(),
+        "Show version.".dimmed()
+    );
+    println!();
+
+    // OPTIONS
+    println!("{}", "OPTIONS".bold());
+    println!(
+        "  {}  {}",
+        "📦  -p, --project <NAME>".bold(),
+        "Project name (default: <cwd>_proj).".dimmed()
+    );
+    println!(
+        "  {}  {}",
+        "🐍  -P, --python <VER>".bold(),
+        "Python version for uv (default: auto-detected).".dimmed()
+    );
+    println!(
+        "  {}  {}",
+        "📁  --outdir <PATH>".bold(),
+        "Output directory (default: $PWD/<project>).".dimmed()
+    );
+    println!();
+
+    // TIP
+    println!("{}", "💡  TIP".bold());
+    println!("  {}", "After creating the project, run".dimmed());
+    println!("    {}", "`uv pip install -e \".[dev]\"`".bold());
+    println!("  {}", "then".dimmed());
+    println!("    {}", "`uv run python -m src.main`".bold());
+}
+/// Create the project using the existing scaffolder plan (non-interactive).
+fn create_project(
+    root: &Path,
+    project: &str,
+    py_full: &str,
+    mm: &str,
+    mm_nodec: &str,
+) -> Result<()> {
+    // Ensure directories (same layout you had, plus app_logging)
+    for d in ["src", "tests", "Notebooks", ".vscode", "src/app_logging"] {
+        fs::create_dir_all(root.join(d))?;
+    }
+
+    let plan = ScaffoldPlan {
+        root: root.to_path_buf(),
+        project: project.to_string(),
+        py_full: py_full.to_string(),
+        mm: mm.to_string(),
+        mm_nodec: mm_nodec.to_string(),
+    };
+
+    plan.write_basic_src()?;
+    plan.write_vscode()?;
+    plan.write_envs()?;
+    plan.write_pyrefly()?;
+    plan.write_pyright()?;
+    plan.write_pyproject()?;
+    plan.write_gitignore()?;
+    plan.write_readme()?;
+    plan.write_app_logging()?; // include your logging package
+    plan.install_uv_toolchain()?; // uv python install + venv
+
+    Ok(())
+}
+
+/// Remove common build/test caches under the project.
+fn clean_project(root: &Path) -> Result<()> {
+    use std::fs::{remove_dir_all, remove_file};
+
+    let dirs = [
+        ".venv",
+        "__pycache__",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".ipynb_checkpoints",
+        "build",
+        "dist",
+        "htmlcov",
+        ".coverage", // sometimes a file
+        ".cache",
+        "src/__pycache__",
+        "tests/__pycache__",
+        "Notebooks/.ipynb_checkpoints",
+    ];
+
+    for rel in dirs {
+        let p = root.join(rel);
+        if p.is_dir() {
+            println!(
+                "  {} {}",
+                "rm -rf".yellow(),
+                p.display().to_string().dimmed()
+            );
+            let _ = remove_dir_all(&p);
+        } else if p.is_file() && rel == ".coverage" {
+            println!("  {} {}", "rm".yellow(), p.display().to_string().dimmed());
+            let _ = remove_file(&p);
+        }
+    }
+    Ok(())
+}
+
+/// Delete the entire project directory (dangerous).
+#[allow(clippy::print_literal)]
+fn delete_project(root: &Path) -> Result<()> {
+    if root.exists() {
+        println!("  {} {}", "rm -rf".red().bold(), root.display());
+        fs::remove_dir_all(root).with_context(|| format!("Failed to delete {}", root.display()))?;
+    } else {
+        println!("  {} {}", "SKIP".dimmed(), "Project root does not exist.");
+    }
     Ok(())
 }
