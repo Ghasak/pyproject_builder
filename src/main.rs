@@ -252,6 +252,7 @@ fn create_project(
     plan.write_readme()?;
     plan.write_app_logging()?; // include your logging package
     plan.install_uv_toolchain()?; // uv python install + venv
+    plan.wirte_makefile()?; // wirte the makefile
 
     Ok(())
 }

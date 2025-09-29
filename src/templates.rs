@@ -512,3 +512,94 @@ class StderrFilter(logging.Filter):
 
 "#
 }
+
+pub fn app_make_file_creator() -> &'static str {
+    r#"
+# === CONFIG ===
+PYTHON_SRC=src
+
+
+GREEN := \033[0;32m
+RED := \033[0;31m
+YELLOW := \033[0;33m
+BLUE := \033[0;34m
+NC := \033[0m # No Color
+ROCKET := 🚀
+CPU := 💻
+GPU := ⚡️
+BAR := 📊
+# === RUN APP ===
+
+.PHONY: run
+run:
+	@uv run python -m $(PYTHON_SRC).main
+
+# === LINTING ===
+
+.PHONY: lint
+lint:
+	@uv run ruff check $(PYTHON_SRC)
+
+.PHONY: lint-fix
+lint-fix:
+	@uv run ruff check $(PYTHON_SRC) --fix
+
+# === FORMATTING ===
+
+.PHONY: fmt
+fmt:
+	@uv run black $(PYTHON_SRC)
+
+.PHONY: fmt-check
+fmt-check:
+	@uv run black --check $(PYTHON_SRC)
+
+# === TYPE CHECKING ===
+
+.PHONY: typecheck
+typecheck:
+	@uv run pyright $(PYTHON_SRC)
+
+# === TESTING ===
+
+.PHONY: test
+test:
+	@uv run pytest tests/
+
+.PHONY: coverage
+coverage:
+	@uv run pytest --cov=$(PYTHON_SRC) tests/
+
+# === CLEANING ===
+
+.PHONY: clean
+clean:
+	@find . -type d -name '__pycache__' -exec rm -rf {} +
+	@find . -type d -name '.pytest_cache' -exec rm -rf {} +
+	@rm -rf .mypy_cache .ruff_cache .coverage dist build *.egg-info .pyright
+
+# === HELP ===
+
+
+
+.PHONY: help
+help:
+	@echo " "
+	@echo "$                                      "
+	@echo "$                                      "
+	@echo "$                                      "
+	@echo " "
+	@echo "Available make targets:"
+	@echo "  run          Run the main application"
+	@echo "  lint         Run Ruff linter"
+	@echo "  lint-fix     Run Ruff with auto-fix"
+	@echo "  fmt          Format code with Black"
+	@echo "  fmt-check    Check formatting with Black"
+	@echo "  typecheck    Static type check with Pyright"
+	@echo "  test         Run Pytest"
+	@echo "  coverage     Run tests with coverage report"
+	@echo "  clean        Remove build/test/cache artifacts"
+
+
+    "#
+}

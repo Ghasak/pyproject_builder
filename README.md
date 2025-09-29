@@ -33,6 +33,13 @@
     - `config07.json`, `glogger.py`, `constants.py`, `myFilters.py`, `myCustomJsonClass01.py`
 - Installs the requested Python with **uv** and creates `.venv`
 
+- Simple startup project (currently in use)
+
+```sh
+#pyproject_builder --create_project --project <project_name> --python <python_version>
+pyproject_builder --create_project --project ArsenalMetalGear --python 3.13.5
+```
+
 ---
 
 ## 🧩 Requirements

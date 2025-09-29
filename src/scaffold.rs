@@ -68,6 +68,14 @@ impl ScaffoldPlan {
         write(self.root.join("README.md"), readme_md(&self.project))?;
         Ok(())
     }
+    pub fn wirte_makefile(&self) -> Result<()> {
+        write(
+            self.root.join("Makefile"),
+            app_make_file_creator(),
+        )?;
+
+        Ok(())
+    }
 
     /// NEW: create the `src/app_logging` package with all files you asked for.
     pub fn write_app_logging(&self) -> Result<()> {
